@@ -92,7 +92,6 @@ def use_code(code):
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
-# ======= سحب OTP محسّن من الإيميل =======
 def fetch_otp_email(email_user, email_pass, service_keyword):
     try:
         imap_server = get_imap_server(email_user)
@@ -127,7 +126,6 @@ def fetch_otp_email(email_user, email_pass, service_keyword):
             
             full_text = body if body else html_body
             
-            # البحث عن أكواد التحقق بدقة
             otp_patterns = [
                 r'(?:verification|verify|confirm|otp|code|رمز|كود|تحقق)[\s:]*?(\d{4,8})',
                 r'(\d{4,8})[\s]*?(?:is your|verification|verify|code|رمز)',
@@ -147,7 +145,6 @@ def fetch_otp_email(email_user, email_pass, service_keyword):
                         mail.logout()
                         return {"type": "otp", "value": code}
             
-            # البحث عن رابط تسجيل دخول
             link_patterns = [
                 r'https?://[^\s"<>\']+/(?:login|signin|auth|verify)[^\s"<>\']*',
                 r'https?://[^\s"<>\']+\?[^\s"<>\']*(?:code|token|verify)[^\s"<>\']*',
@@ -164,7 +161,6 @@ def fetch_otp_email(email_user, email_pass, service_keyword):
     except Exception as e:
         return {"type": "error", "value": str(e)}
 
-# ======= سحب OTP من الرابط =======
 async def fetch_otp_url(url):
     try:
         async with async_playwright() as p:
@@ -173,7 +169,6 @@ async def fetch_otp_url(url):
             await page.goto(url, timeout=30000)
             await page.wait_for_timeout(8000)
 
-            # محاولة سحب الكود من Sign In Code
             try:
                 sign_in_section = await page.locator("text=Sign In Code").locator("..").inner_text()
                 otp_match = re.search(r'\b(\d{4,8})\b', sign_in_section)
@@ -185,7 +180,6 @@ async def fetch_otp_url(url):
             except:
                 pass
 
-            # محاولة سحب أي كود معزول
             try:
                 all_text = await page.inner_text("body")
                 matches = re.finditer(r'^\s*(\d{4,8})\s*$', all_text, re.MULTILINE)
@@ -197,7 +191,6 @@ async def fetch_otp_url(url):
             except:
                 pass
 
-            # البحث عن رابط تسجيل دخول مؤقت
             try:
                 temp_link_section = await page.locator("text=Temporary Link").locator("..").inner_text()
                 link_match = re.search(r'https?://[^\s"<>\']+', temp_link_section)
@@ -207,7 +200,6 @@ async def fetch_otp_url(url):
             except:
                 pass
 
-            # محاولة عامة لإيجاد أي رابط
             try:
                 all_links = await page.locator("a").all()
                 for link in all_links[:5]:
@@ -223,16 +215,18 @@ async def fetch_otp_url(url):
     except Exception as e:
         return {"type": "error", "value": str(e)}
 
-# ======= واجهة العميل =======
+# ======= واجهة العميل (محسّنة) =======
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_admin(user_id):
         await show_admin_menu(update)
         return
+    
     await update.message.reply_text(
-        "👋 أهلاً بك!\n\n"
-        "🔐 أرسل كود الاشتراك الخاص بك:"
+        "🎯 *أهلاً بك في بوت الأكواد!*\n\n"
+        "لتبدأ، أرسل كود الاشتراك الخاص بك:",
+        parse_mode="Markdown"
     )
     context.user_data["waiting_code"] = True
 
@@ -241,24 +235,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user_id):
         return
     if not context.user_data.get("waiting_code"):
-        await update.message.reply_text("اضغط /start للبدء")
+        await update.message.reply_text("⚠️ اضغط /start للبدء")
         return
+    
     code = update.message.text.strip().upper()
     service, status = check_code(code)
+    
     if status == "invalid":
-        await update.message.reply_text("❌ الكود غير صحيح")
+        await update.message.reply_text("❌ الكود غير صحيح\nتحقق من الكود وحاول مرة أخرى")
         return
     if status == "expired":
-        await update.message.reply_text("❌ انتهت استخداماته")
+        await update.message.reply_text("⏰ انتهت استخدامات هذا الكود\nتواصل مع الدعم")
         return
+    
     context.user_data["waiting_code"] = False
     context.user_data["service"] = service
     context.user_data["code"] = code
+    
     codes = load_codes()
     uses_left = codes[code]["uses_left"]
-    keyboard = [[InlineKeyboardButton(f"🔑 احصل على كود {service.upper()}", callback_data=f"get_{service}")]]
+    
+    keyboard = [[InlineKeyboardButton(f"📲 احصل على كود {service.upper()}", callback_data=f"get_{service}")]]
     await update.message.reply_text(
-        f"✅ تم التحقق!\n\n📦 خدمتك: {service.upper()}\n🔄 متبقي: {uses_left}/3",
+        f"✅ *تم التحقق بنجاح!*\n\n"
+        f"📦 خدمتك: `{service.upper()}`\n"
+        f"🔄 استخدامات متبقية: `{uses_left}/3`\n\n"
+        f"اضغط الزر أدناه للحصول على الكود:",
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -274,16 +277,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("➕ إضافة إيميل", callback_data="admin_add")],
             [InlineKeyboardButton("🔗 إضافة رابط", callback_data="admin_add_url")],
             [InlineKeyboardButton("📋 عرض الحسابات", callback_data="admin_list")],
-            [InlineKeyboardButton("🗑 حذف حساب", callback_data="admin_delete")],
-            [InlineKeyboardButton("🎟 عرض الأكواد", callback_data="admin_codes")],
+            [InlineKeyboardButton("🗑️ حذف حساب", callback_data="admin_delete")],
+            [InlineKeyboardButton("🎟️ عرض الأكواد", callback_data="admin_codes")],
         ]
-        await query.edit_message_text("⚙️ لوحة الأدمن", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(
+            "*⚙️ لوحة تحكم الأدمن*\n\nاختر الإجراء:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
         return
 
     if data == "admin_add":
         if not is_admin(user_id): return
         await query.edit_message_text(
-            "➕ أرسل:\n\n`/addmail اسم_الخدمة الإيميل الباسورد`",
+            "*➕ إضافة إيميل جديد*\n\n"
+            "أرسل الأمر بهذا الشكل:\n\n"
+            "`/addmail اسم_الخدمة الإيميل الباسورد`\n\n"
+            "📌 مثال:\n"
+            "`/addmail netflix store@gmail.com abc123xyz`",
             parse_mode="Markdown"
         )
         return
@@ -291,7 +302,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admin_add_url":
         if not is_admin(user_id): return
         await query.edit_message_text(
-            "🔗 أرسل:\n\n`/addurl اسم_الخدمة الرابط`",
+            "*🔗 إضافة رابط جديد*\n\n"
+            "أرسل الأمر بهذا الشكل:\n\n"
+            "`/addurl اسم_الخدمة الرابط`\n\n"
+            "📌 مثال:\n"
+            "`/addurl netflix https://code.tvleb.com/xxxxx`",
             parse_mode="Markdown"
         )
         return
@@ -300,19 +315,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_admin(user_id): return
         mails = load_mails()
         urls = load_urls()
-        text = "📋 الحسابات:\n\n"
+        text = "*📋 الحسابات المضافة:*\n\n"
         if mails:
-            text += "📧 إيميلات:\n"
+            text += "*📧 الإيميلات:*\n"
             for s, d in mails.items():
-                text += f"• {s}: {d['email']}\n"
+                text += f"• `{s}` → {d['email']}\n"
         if urls:
-            text += "\n🔗 روابط:\n"
+            text += "\n*🔗 الروابط:*\n"
             for s in urls.keys():
-                text += f"• {s}\n"
+                text += f"• `{s}`\n"
         if not mails and not urls:
-            text = "📭 فارغ"
+            text = "📭 لا توجد حسابات مضافة"
         keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_menu")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data == "admin_codes":
@@ -321,11 +336,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         urls = load_urls()
         all_services = list(set(list(mails.keys()) + list(urls.keys())))
         if not all_services:
-            await query.edit_message_text("📭 فارغ")
+            await query.edit_message_text("📭 لا توجد خدمات")
             return
-        keyboard = [[InlineKeyboardButton(f"🎟 {s.upper()}", callback_data=f"codes_{s}")] for s in all_services]
+        keyboard = [[InlineKeyboardButton(f"🎟️ {s.upper()}", callback_data=f"codes_{s}")] for s in all_services]
         keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_menu")])
-        await query.edit_message_text("اختر:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("*🎟️ اختر الخدمة:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data.startswith("codes_"):
@@ -334,11 +349,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         codes = load_codes()
         service_codes = {k: v for k, v in codes.items() if v["service"] == service}
         if not service_codes:
-            await query.edit_message_text(f"📭 فارغ")
+            await query.edit_message_text(f"📭 لا توجد أكواد لـ {service}")
             return
-        text = f"🎟 أكواد {service.upper()}:\n\n"
+        text = f"*🎟️ أكواد {service.upper()}:*\n\n"
         for code, info in service_codes.items():
-            text += f"• `{code}` — {info['uses_left']}/3\n"
+            status = "🔥" if info['uses_left'] == 1 else "✅"
+            text += f"{status} `{code}` → {info['uses_left']}/3\n"
         keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_codes")]]
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -349,11 +365,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         urls = load_urls()
         all_services = list(set(list(mails.keys()) + list(urls.keys())))
         if not all_services:
-            await query.edit_message_text("📭 فارغ")
+            await query.edit_message_text("📭 لا توجد حسابات")
             return
-        keyboard = [[InlineKeyboardButton(f"🗑 {s}", callback_data=f"del_{s}")] for s in all_services]
+        keyboard = [[InlineKeyboardButton(f"🗑️ {s}", callback_data=f"del_{s}")] for s in all_services]
         keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_menu")])
-        await query.edit_message_text("اختر:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("*اختر الحساب للحذف:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data.startswith("del_"):
@@ -368,7 +384,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del urls[service]
             save_urls(urls)
         keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_menu")]]
-        await query.edit_message_text(f"✅ تم حذف {service}", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(f"✅ تم حذف `{service}` بنجاح", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     # العميل يطلب كود
@@ -378,10 +394,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_code = context.user_data.get("code")
 
         if user_service != service:
-            await query.edit_message_text("❌ غير مصرح")
+            await query.edit_message_text("❌ ليس لديك صلاحية لهذه الخدمة")
             return
 
-        await query.edit_message_text(f"🔍 جاري الجلب...")
+        await query.edit_message_text("⏳ جاري جلب الكود...")
 
         mails = load_mails()
         urls = load_urls()
@@ -398,40 +414,59 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         retry_btn = []
         if uses_left > 0:
-            retry_btn = [[InlineKeyboardButton(f"🔄 كود جديد ({uses_left})", callback_data=f"get_{service}")]]
+            retry_btn = [[InlineKeyboardButton(f"🔄 كود جديد ({uses_left} متبقي)", callback_data=f"get_{service}")]]
 
         if not result:
-            await query.edit_message_text("⚠️ ما لقيت كود", reply_markup=InlineKeyboardMarkup(retry_btn) if retry_btn else None)
+            await query.edit_message_text(
+                "⚠️ لم يتم العثور على الكود\n\n"
+                "تأكد من طلب الكود من التطبيق أولاً",
+                reply_markup=InlineKeyboardMarkup(retry_btn) if retry_btn else None
+            )
         elif result["type"] == "error":
-            await query.edit_message_text("⚠️ خطأ في الاتصال")
+            await query.edit_message_text("❌ خطأ في الاتصال - تواصل مع الدعم")
         elif result["type"] == "otp":
             await query.edit_message_text(
-                f"✅ الكود:\n\n🔑 `{result['value']}`",
+                f"✅ *كود {service.upper()}*\n\n"
+                f"🔑 `{result['value']}`\n\n"
+                f"⏱️ صالح لدقائق قليلة",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(retry_btn) if retry_btn else None
             )
         elif result["type"] == "link":
-            keyboard = [[InlineKeyboardButton("🔗 فتح الرابط", url=result['value'])]]
+            keyboard = [[InlineKeyboardButton("🔗 فتح رابط الدخول", url=result['value'])]]
             if retry_btn:
                 keyboard.append(retry_btn[0])
-            await query.edit_message_text("✅ الرابط جاهز:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(
+                f"✅ *رابط دخول {service.upper()} جاهز*",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
 async def show_admin_menu(update):
     keyboard = [
         [InlineKeyboardButton("➕ إضافة إيميل", callback_data="admin_add")],
         [InlineKeyboardButton("🔗 إضافة رابط", callback_data="admin_add_url")],
         [InlineKeyboardButton("📋 عرض الحسابات", callback_data="admin_list")],
-        [InlineKeyboardButton("🗑 حذف حساب", callback_data="admin_delete")],
-        [InlineKeyboardButton("🎟 عرض الأكواد", callback_data="admin_codes")],
+        [InlineKeyboardButton("🗑️ حذف حساب", callback_data="admin_delete")],
+        [InlineKeyboardButton("🎟️ عرض الأكواد", callback_data="admin_codes")],
     ]
-    await update.message.reply_text("⚙️ لوحة الأدمن", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "*⚙️ لوحة تحكم الأدمن*\n\n"
+        "اختر الإجراء المطلوب:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
 
 async def add_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ للأدمن فقط")
         return
     if len(context.args) < 3:
-        await update.message.reply_text("❌ الصيغة: /addmail الخدمة الإيميل الباسورد")
+        await update.message.reply_text(
+            "❌ صيغة خاطئة\n\n"
+            "الصيغة: `/addmail الخدمة الإيميل الباسورد`",
+            parse_mode="Markdown"
+        )
         return
     service = context.args[0].lower()
     mails = load_mails()
@@ -440,7 +475,8 @@ async def add_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_codes = generate_codes(service, 20)
     codes_text = "\n".join([f"`{c}`" for c in new_codes])
     await update.message.reply_text(
-        f"✅ تم إضافة {service}!\n\n🎟 الأكواد:\n\n{codes_text}",
+        f"✅ *تم إضافة {service} بنجاح!*\n\n"
+        f"🎟️ *الأكواد الجديدة:* _(كل كود يستخدم 3 مرات)_\n\n{codes_text}",
         parse_mode="Markdown"
     )
 
@@ -449,7 +485,11 @@ async def add_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ للأدمن فقط")
         return
     if len(context.args) < 2:
-        await update.message.reply_text("❌ الصيغة: /addurl الخدمة الرابط")
+        await update.message.reply_text(
+            "❌ صيغة خاطئة\n\n"
+            "الصيغة: `/addurl الخدمة الرابط`",
+            parse_mode="Markdown"
+        )
         return
     service = context.args[0].lower()
     url = context.args[1]
@@ -459,14 +499,15 @@ async def add_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_codes = generate_codes(service, 20)
     codes_text = "\n".join([f"`{c}`" for c in new_codes])
     await update.message.reply_text(
-        f"✅ تم إضافة رابط {service}!\n\n🎟 الأكواد:\n\n{codes_text}",
+        f"✅ *تم إضافة رابط {service} بنجاح!*\n\n"
+        f"🎟️ *الأكواد الجديدة:* _(كل كود يستخدم 3 مرات)_\n\n{codes_text}",
         parse_mode="Markdown"
     )
 
 async def delete_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id): return
     if not context.args:
-        await update.message.reply_text("❌ اسم الخدمة")
+        await update.message.reply_text("❌ اكتب اسم الخدمة")
         return
     service = context.args[0].lower()
     mails = load_mails()
@@ -477,7 +518,7 @@ async def delete_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if service in urls:
         del urls[service]
         save_urls(urls)
-    await update.message.reply_text(f"🗑 تم حذف {service}")
+    await update.message.reply_text(f"🗑️ تم حذف `{service}` بنجاح", parse_mode="Markdown")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
